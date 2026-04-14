@@ -3,6 +3,18 @@ close all
 clear
 clc
 
+% NOTE: make sure to run either:
+% - init_dataset.bat (Windows)
+% - init_dataset.sh  (Linux/MacOS)
+% - init_dataset.py  (if Python is installed)
+
+% These scripts will generate the folder tree structure necessary for this
+% script to run. Moreover, to extract a random sample of airfoils from the Selig
+% database, run from this directory:
+% - fetch_selig_airfoils.m
+
+% Have fun!
+
 global project_directory
 if ~isempty(project_directory)
     cd(project_directory)
@@ -96,6 +108,7 @@ for i = 1:numel(coord_dataset)
 
 end
 
+% save acquired polar data inside dataset/!hdf5/<number>
 cd(project_directory)
 build_hdf5_polar_dataset("dataset.h5")
 
