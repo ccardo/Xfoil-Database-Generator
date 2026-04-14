@@ -1,4 +1,6 @@
-dataset/*
+./dataset/*
 !dataset/.gitkeep
 
-Copy_of_XFOIL6.99/*
+./Copy_of_XFOIL6.99/*
+
+./*.asv
