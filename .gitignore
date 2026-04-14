@@ -1,6 +1,9 @@
-./dataset/*
+dataset/*
 !dataset/.gitkeep
 
-./Copy_of_XFOIL6.99/*
+Copy_of_XFOIL6.99/*
 
-./*.asv
+dataset_functions/*.asv
+functions/*.asv
+XFOIL6.99/*.asv
+*.asv
