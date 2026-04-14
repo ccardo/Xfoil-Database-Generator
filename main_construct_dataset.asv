@@ -1,0 +1,193 @@
+format short g
+close all
+clear
+clc
+
+global project_directory
+if ~isempty(project_directory)
+    cd(project_directory)
+elseif any(arrayfun(@(x) strcmpi(x.name, "dataset") & x.isdir, dir))
+    project_directory = string(cd);
+end
+
+addpath("functions\")
+addpath("dataset\")
+addpath("dataset_functions\")
+
+xfoil_dir   = "XFOIL6.99";
+dataset_dir = "dataset";
+
+coord_dir = fullfile(cd, dataset_dir, "coordinates/");
+bl_dir    = fullfile(cd, dataset_dir, "blfiles/");
+cp_dir    = fullfile(cd, dataset_dir, "cpfiles/");
+cst_dir   = fullfile(cd, dataset_dir, "cstfiles/");
+polar_dir = fullfile(cd, dataset_dir, "polarfiles/");
+
+fail_cst      = {};
+fail_xfoil    = {};
+fail_dispatch = {};
+
+% flow parameters for analysis
+Re    = 1e6;
+alpha = [0, 20, 1];
+
+coord_dataset = string(ls(coord_dir));
+coord_dataset = coord_dataset(3:end);
+for i = 1:numel(coord)
+
+    geom_file   = coord_dataset(i);
+    geom_number = erase(geom_file, ".dat");
+    geom_path   = fullfile(coord_dir, geom_file);
+    copyfile(geom_path, xfoil_dir);
+
+    % generate CST coefficients from coordinates
+    data = readmatrix(geom_path);
+    xp   = data(:, 1);
+    yp   = data(:, 2);
+    [T, B, success_cst] = CSToptimization(xp, yp);
+    
+    cst_filepath = fullfile(cst_dir, sprintf("cst_%s.txt", geom_number));
+    success_wrt = write_cst(cst_filepath, T, B);
+
+    if ~(success_wrt && success_cst)
+        fail_cst{end+1} = char(geom_file);
+        continue
+    end
+
+    % generate XFOIL input file
+    cd(xfoil_dir)
+    generate_xfoil_input(geom_file, ...
+        "reynolds", Re, ...
+        "alpha_range", alpha, ...
+        "show_plots", true);
+
+    % run XFOIL
+    xfoil_path = which("xfoil.exe");
+    input_path = which("xfoil_input.txt");
+    [exitcode_xfl, timed_out] = run_xfoil( ...
+        "xfoil_path", xfoil_path, ...
+        "script_file", input_path, ...
+        "timeout", 120, ...
+        "verbose", true, ...
+        "print_xfoil_out", false);
+   
+    if exitcode_xfl == -1 || timed_out
+        fail_xfoil{end+1} = char(geom_number);
+        cleanup_xfoil_directory(xfoil_dir);
+        continue
+    end
+
+    % dispatch outputs to respective folders
+    success_dpc = dispatch_output(geom_number, ...
+        xfoil_dir, ...
+        cp_dir, ...
+        bl_dir, ...
+        polar_dir);
+
+    if ~success_dpc
+        fail_dispatch{end+1} = char(geom_number);
+        cleanup_xfoil_directory(xfoil_dir)
+        continue
+    end
+
+    % cleanup remaining files
+    cleanup_xfoil_directory(xfoil_dir)
+    cd(project_directory)
+end
+
+build_hdf5_polar_dataset("dataset.h5")
+
+failed = struct();
+failed.cst = fail_cst;
+failed.xfoil = fail_xfoil;
+failed.dispatch = fail_dispatch;
+save("failed_attempts.mat", "failed", "-mat")
+
+hd5_folder = create_next_dataset_folder();
+movefile("dataset.h5", hd5_folder)
+movefile("failed_attempts.mat", hd5_folder)
+
+
+%
+function cleanup_xfoil_directory(xfoil_dir)
+    
+    global project_directory
+    cd(project_directory)
+    cd(xfoil_dir)
+    
+    contents = string(ls);
+    for i = 3:numel(contents)
+
+        file = contents(i);
+        if contains(file, ".exe")
+            continue
+        end
+
+        delete(file)
+    end
+
+    contents = string(ls);
+    if ~any(contains(contents, "xfoil.exe")) || ...
+       ~any(contains(contents, "pplot.exe")) || ...
+       ~any(contains(contents, "pxplot.exe"))
+        error("Somehow the XFOIL executables have been deleted")
+    end
+end
+
+function success = dispatch_output(geom_number, xfoil_dir, cp_dir, bl_dir, polar_dir)
+
+    global project_directory
+    cd(project_directory)
+    cd(xfoil_dir)
+    
+    try
+        contents = string(ls);
+        for i = 3:numel(contents)
+    
+            file = contents(i);
+    
+            if contains(file, "cp")
+                movefile(file, fullfile(cp_dir, geom_number))
+            elseif contains(file, "bl")
+                movefile(file, fullfile(bl_dir, geom_number))
+            elseif contains(file, "polar")
+                movefile(file, polar_dir)
+            end
+        end
+        success = true;
+    catch ME
+        success = false;
+        error(ME)
+    end
+end
+
+function new_folder = create_next_dataset_folder(base_dir)
+% Creates dataset/hdf5/0, 1, 2, ... depending on availability
+%
+% OUTPUT:
+%   new_folder → full path to created directory
+
+    if nargin == 0
+        base_dir = fullfile('dataset', '!hdf5');
+    end
+
+    % Ensure base directory exists
+    if ~isfolder(base_dir)
+        mkdir(base_dir);
+    end
+
+    k = 0;
+
+    while true
+        candidate = fullfile(base_dir, num2str(k));
+
+        if ~isfolder(candidate)
+            mkdir(candidate);
+            new_folder = candidate;
+            fprintf('Created folder: %s\n', new_folder);
+            return;
+        end
+
+        k = k + 1;
+    end
+end
